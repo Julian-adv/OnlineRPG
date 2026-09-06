@@ -21,7 +21,9 @@ class FakeAudio {
   })
   addEventListener = vi.fn()
   removeEventListener = vi.fn()
-  removeAttribute = vi.fn()
+  removeAttribute = vi.fn((name: string) => {
+    if (name === 'src') this.src = ''
+  })
   load = vi.fn()
   constructor() {
     FakeAudio.created.push(this)
@@ -32,6 +34,14 @@ let bgm: Bgm
 let fetchMock: ReturnType<typeof vi.fn>
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
+
+function deferSuccessfulFetch() {
+  let resolveFetch!: (value: unknown) => void
+  fetchMock.mockImplementationOnce(
+    () => new Promise((resolve) => (resolveFetch = resolve))
+  )
+  return () => resolveFetch({ ok: true, blob: async () => new Blob(['x']) })
+}
 
 beforeEach(async () => {
   vi.resetModules()
@@ -83,20 +93,153 @@ describe('bgmManager fetches tracks whole and plays them from a blob', () => {
     expect(battle.play).toHaveBeenCalledTimes(1)
   })
 
+  it('reuses battle blobs while each playback owns its object URL', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    bgm.startBattleMusic()
+    await flush()
+    const battle = FakeAudio.created[0]
+    const firstSrc = battle.src
+
+    bgm.stopBattleMusic()
+    bgm.startBattleMusic()
+    await flush()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(battle.src).not.toBe(firstSrc)
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(firstSrc)
+    expect(battle.play).toHaveBeenCalledTimes(2)
+  })
+
+  it('shares an unfinished download across consecutive battles', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const completeFetch = deferSuccessfulFetch()
+    bgm.startBattleMusic()
+    bgm.stopBattleMusic()
+    bgm.startBattleMusic()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    completeFetch()
+    await flush()
+    expect(FakeAudio.created[0].play).toHaveBeenCalledTimes(1)
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test/1')
+    expect(FakeAudio.created[0].src).toBe('blob:test/2')
+  })
+
+  it.each(['mute', 'zero volume'])(
+    'defers playlist and battle downloads during %s, then starts the battle track',
+    async (setting) => {
+      if (setting === 'mute') bgm.bgmMuted.set(true)
+      else bgm.bgmVolume.set(0)
+      bgm.startBgm()
+      bgm.startBattleMusic()
+      await flush()
+      expect(fetchMock).not.toHaveBeenCalled()
+      const battle = FakeAudio.created[0]
+      expect(battle.play).not.toHaveBeenCalled()
+
+      if (setting === 'mute') bgm.bgmMuted.set(false)
+      else bgm.bgmVolume.set(0.5)
+      await flush()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(battle.src).toMatch(/^blob:/)
+      expect(battle.play).toHaveBeenCalledTimes(1)
+      expect(battle.muted).toBe(false)
+    }
+  )
+
+  it('keeps downloads deferred when unmuted at zero volume', async () => {
+    bgm.bgmMuted.set(true)
+    bgm.bgmVolume.set(0)
+    bgm.startBattleMusic()
+    bgm.bgmMuted.set(false)
+    await flush()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('retains a download completed while muted for unmute', async () => {
+    const completeFetch = deferSuccessfulFetch()
+    bgm.startBattleMusic()
+    bgm.bgmMuted.set(true)
+    completeFetch()
+    await flush()
+    const battle = FakeAudio.created[0]
+    expect(battle.play).not.toHaveBeenCalled()
+
+    bgm.bgmMuted.set(false)
+    await flush()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(battle.play).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads the newly selected battle track after a muted battle transition', async () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    bgm.startBattleMusic()
+    await flush()
+    bgm.bgmMuted.set(true)
+    bgm.stopBattleMusic()
+    random.mockReturnValue(0.2)
+    bgm.startBattleMusic()
+    await flush()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(FakeAudio.created[0].src).toBe('')
+
+    bgm.bgmMuted.set(false)
+    await flush()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1][0]).not.toBe(fetchMock.mock.calls[0][0])
+    expect(FakeAudio.created[0].dataset.trackName).toBe('Blood and Bronze (1)')
+  })
+
+  it.each(['network', 'http'])(
+    'retries battle downloads after a %s failure',
+    async (failure) => {
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      if (failure === 'network')
+        fetchMock.mockRejectedValueOnce(new Error('offline'))
+      else fetchMock.mockResolvedValueOnce({ ok: false })
+      bgm.startBattleMusic()
+      await flush()
+      expect(FakeAudio.created[0].src).toMatch(/\/bgm\//)
+
+      bgm.stopBattleMusic()
+      bgm.startBattleMusic()
+      await flush()
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(FakeAudio.created[0].src).toMatch(/^blob:/)
+    }
+  )
+
+  it('evicts old battle blobs to keep retained data within 48 MiB', async () => {
+    const largeBlob = new Blob(['x'])
+    Object.defineProperty(largeBlob, 'size', { value: 25 * 1024 * 1024 })
+    fetchMock.mockResolvedValue({ ok: true, blob: async () => largeBlob })
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    bgm.startBattleMusic()
+    await flush()
+    bgm.stopBattleMusic()
+    random.mockReturnValue(0.2)
+    bgm.startBattleMusic()
+    await flush()
+    bgm.stopBattleMusic()
+    random.mockReturnValue(0)
+    bgm.startBattleMusic()
+    await flush()
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls[2][0]).toBe(fetchMock.mock.calls[0][0])
+  })
+
   it('a fetch that finishes after battle music took over does not play', async () => {
-    let resolveFetch!: (v: unknown) => void
-    fetchMock.mockImplementationOnce(
-      () => new Promise((r) => (resolveFetch = r))
-    )
+    const completeFetch = deferSuccessfulFetch()
     bgm.startBgm()
     const playlistEl = FakeAudio.created[0]
     bgm.startBattleMusic()
-    resolveFetch({ ok: true, blob: async () => new Blob(['x']) })
+    completeFetch()
     await flush()
     expect(playlistEl.src).toBe('')
     expect(playlistEl.play).not.toHaveBeenCalled()
-    // The battle blob resolved first (blob:test/1); the late playlist one is dropped.
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test/2')
+    const battleSrc = FakeAudio.created.find((el) => el.loop)!.src
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1)
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(battleSrc)
   })
 
   it('releases the finished track blob before the quiet gap', async () => {
@@ -140,14 +283,11 @@ describe('bgmManager fetches tracks whole and plays them from a blob', () => {
   it.each(['startBgm', 'startBattleMusic'] as const)(
     'does not play a pending %s download after disposal',
     async (start) => {
-      let resolveFetch!: (v: unknown) => void
-      fetchMock.mockImplementationOnce(
-        () => new Promise((resolve) => (resolveFetch = resolve))
-      )
+      const completeFetch = deferSuccessfulFetch()
       bgm[start]()
       const el = FakeAudio.created[0]
       bgm.disposeBgm()
-      resolveFetch({ ok: true, blob: async () => new Blob(['x']) })
+      completeFetch()
       await flush()
 
       expect(el.play).not.toHaveBeenCalled()

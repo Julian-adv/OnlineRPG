@@ -4,27 +4,60 @@ import { assetUrl } from '../utils/assetUrl'
 
 const bgmSrc = (file: string) => assetUrl(`/bgm/${file}`)
 
-/** `<audio>` streams with Range requests, which browsers don't reuse across
- *  page loads even under `immutable`; fetching the whole file first lands a
- *  200 in the HTTP cache, so each browser downloads a track once. */
-async function loadBgmSrc(file: string): Promise<string> {
-  const url = bgmSrc(file)
+const BATTLE_CACHE_BYTES = 48 * 1024 * 1024
+const battleBlobs = new Map<string, Blob>()
+const battleDownloads = new Map<string, Promise<Blob | null>>()
+let battleCacheBytes = 0
+
+async function fetchBgmBlob(file: string): Promise<Blob | null> {
   try {
-    const res = await fetch(url)
-    if (!res.ok) return url
-    return URL.createObjectURL(await res.blob())
+    const res = await fetch(bgmSrc(file))
+    return res.ok ? await res.blob() : null
   } catch {
-    return url
+    return null
   }
+}
+
+function loadBattleBlob(file: string): Promise<Blob | null> {
+  const cached = battleBlobs.get(file)
+  if (cached) {
+    battleBlobs.delete(file)
+    battleBlobs.set(file, cached)
+    return Promise.resolve(cached)
+  }
+  const pending = battleDownloads.get(file)
+  if (pending) return pending
+  const download = fetchBgmBlob(file).then((blob) => {
+    battleDownloads.delete(file)
+    if (blob && !disposed && blob.size <= BATTLE_CACHE_BYTES) {
+      for (const [oldFile, oldBlob] of battleBlobs) {
+        if (battleCacheBytes + blob.size <= BATTLE_CACHE_BYTES) break
+        battleBlobs.delete(oldFile)
+        battleCacheBytes -= oldBlob.size
+      }
+      battleBlobs.set(file, blob)
+      battleCacheBytes += blob.size
+    }
+    return blob
+  })
+  battleDownloads.set(file, download)
+  return download
+}
+
+// Whole-file fetch avoids Range requests; battle blobs also survive HTTP cache misses.
+async function loadBgmSrc(file: string): Promise<string> {
+  const blob = await (BATTLE_BGM_FILES.includes(file)
+    ? loadBattleBlob(file)
+    : fetchBgmBlob(file))
+  return blob ? URL.createObjectURL(blob) : bgmSrc(file)
 }
 
 function releaseSrc(src: string) {
   if (src.startsWith('blob:')) URL.revokeObjectURL(src)
 }
 
-/** Drop the media resource; the element itself waits for GC, but a blob or a
- *  half-buffered track should not. */
 function releaseElement(el: HTMLAudioElement) {
+  loads.set(el, (loads.get(el) ?? 0) + 1)
   releaseSrc(el.src)
   el.removeAttribute('src')
   el.load()
@@ -33,8 +66,7 @@ function releaseElement(el: HTMLAudioElement) {
 const loads = new WeakMap<HTMLAudioElement, number>()
 let disposed = false
 
-/** Load `file` into `el` and play it, unless a newer load on the same element
- *  or `stillWanted()` says the moment has passed. */
+/** Ignore loads superseded by another track or playback state. */
 async function attachTrack(
   el: HTMLAudioElement,
   file: string,
@@ -42,6 +74,7 @@ async function attachTrack(
 ) {
   const seq = (loads.get(el) ?? 0) + 1
   loads.set(el, seq)
+  if (disposed || !stillWanted()) return
   const src = await loadBgmSrc(file)
   if (disposed || loads.get(el) !== seq || !stillWanted()) {
     releaseSrc(src)
@@ -139,11 +172,9 @@ function applyAudioSettings(
 }
 
 let battleAudio: HTMLAudioElement | null = null
+let battleFile: string | null = null
 
-/** Walk `el.volume` toward `target` over `ms`, then `onDone(arrived)` —
- *  `arrived` is false when `abort()` cut the fade short. Callers keep the
- *  returned timer as their "fade in flight" sentinel; while one is live they
- *  must not let other code write the element's volume. */
+/** Own the element's volume until arrival or abort; report which ended the fade. */
 function fadeVolume(
   el: HTMLAudioElement,
   target: number,
@@ -198,7 +229,7 @@ function playNext() {
 
 function playTrack() {
   if (disposed || mode !== 'normal') return
-  if (get(bgmMuted) || playlistQuiet()) {
+  if (getTargetVolume() <= 0 || playlistQuiet()) {
     currentBgmTrack.set('')
     return
   }
@@ -224,7 +255,7 @@ function playTrack() {
   void attachTrack(
     audio,
     file,
-    () => mode === 'normal' && !get(bgmMuted) && !playlistQuiet()
+    () => mode === 'normal' && getTargetVolume() > 0 && !playlistQuiet()
   )
 }
 
@@ -246,9 +277,7 @@ let battleQuietTimer: ReturnType<typeof setTimeout> | undefined
 export function startBattleMusic() {
   if (disposed || mode === 'battle') return
   mode = 'battle'
-  // A recital cannot outrank a fight: a listener's copy waits to rejoin
-  // after; the performer ends it, and their client tells the server so the
-  // strum animation stops everywhere.
+  // Combat ends our performance and pauses a nearby performer's track.
   let endedCallback: (() => void) | null = null
   if (performanceEnded) endedCallback = dropPerformance()
   else performanceAudio?.pause()
@@ -266,9 +295,8 @@ export function startBattleMusic() {
   battleFadeTimer = undefined
   clearTimeout(battleQuietTimer)
 
-  const file =
+  battleFile =
     BATTLE_BGM_FILES[Math.floor(Math.random() * BATTLE_BGM_FILES.length)]
-  const trackName = file.replace(/\.(mp3|m4a)$/, '')
 
   if (!battleAudio) {
     battleAudio = new Audio()
@@ -276,12 +304,29 @@ export function startBattleMusic() {
     battleAudio.addEventListener('playing', () => {
       currentBgmTrack.set(battleAudio?.dataset.trackName ?? '')
     })
+  } else {
+    battleAudio.pause()
+    releaseElement(battleAudio)
   }
-  battleAudio.dataset.trackName = trackName
+  battleAudio.dataset.trackName = battleFile.replace(/\.(mp3|m4a)$/, '')
   applyAudioSettings(battleAudio)
-  void attachTrack(battleAudio, file, () => mode === 'battle' && !get(bgmMuted))
+  resumeBattleMusic()
 
   endedCallback?.()
+}
+
+function resumeBattleMusic() {
+  if (!battleAudio || !battleFile || getTargetVolume() <= 0) return
+  if (battleAudio.src) {
+    battleAudio.play().catch(() => {})
+    currentBgmTrack.set(battleAudio.dataset.trackName ?? '')
+    return
+  }
+  void attachTrack(
+    battleAudio,
+    battleFile,
+    () => mode === 'battle' && getTargetVolume() > 0
+  )
 }
 
 export function stopBattleMusic() {
@@ -330,7 +375,7 @@ function scheduleNormalBgmResume() {
 function resumeNormalBgm() {
   if (!started) return
   if (mode !== 'normal') return
-  if (get(bgmMuted)) return
+  if (getTargetVolume() <= 0) return
   if (takePerformanceFloor()) return
   if (playlistQuiet()) return
   if (!audio) {
@@ -359,14 +404,12 @@ function pauseForMute() {
 }
 
 function resumeAfterUnmute() {
+  if (disposed || getTargetVolume() <= 0) return
   applyAudioSettings(audio)
   applyAudioSettings(battleAudio)
 
   if (mode === 'battle') {
-    if (battleAudio) {
-      battleAudio.play().catch(() => {})
-      currentBgmTrack.set(battleAudio.dataset.trackName ?? '')
-    }
+    resumeBattleMusic()
     return
   }
 
@@ -378,13 +421,7 @@ function resumeAfterUnmute() {
 }
 
 // --- /play_music performance ---
-// One slot: a new performance replaces the running one. `performanceAudio`
-// doubles as the "a performance exists" flag, and a non-null `performanceEnded`
-// marks it as the local player's own. The performer's element is the clock —
-// it runs even while silenced, because its `ended` is what ends the emote for
-// everyone. `currentPerformance` is the tune on right now, loaded or not: a
-// listener never loads a track they would not hear, and rejoins mid-track
-// (by wall clock) once the speakers free up.
+// Our performance keeps time while muted; listeners defer loading and rejoin by elapsed time.
 
 let performanceAudio: HTMLAudioElement | null = null
 let performanceEnded: (() => void) | null = null
@@ -488,9 +525,7 @@ function applyPerformanceVolume() {
   )
 }
 
-/** Put the current performance back on the speakers — it was silenced by
- *  battle music or by a mute the player has since lifted — at wherever the
- *  tune is by now. Returns whether it now owns the speakers. */
+/** Resume the current performance at its elapsed time, taking the speakers. */
 function takePerformanceFloor(): boolean {
   if (!currentPerformance || getTargetVolume() <= 0) return false
   if (!performanceAudio) {
@@ -513,9 +548,7 @@ function takePerformanceFloor(): boolean {
   return true
 }
 
-/** Drop the running performance and hand the speakers back to `mode`'s owner.
- *  Returns the end callback so the caller decides when the performer hears
- *  about it. Never restarts the playlist — callers do, when they want it. */
+/** Release audio and return the end callback; callers control notification and resume. */
 function releasePerformance(): (() => void) | null {
   clearInterval(performanceFadeTimer)
   performanceFadeTimer = undefined
@@ -555,11 +588,7 @@ function startPerformanceFadeIn(el: HTMLAudioElement) {
   )
 }
 
-/** Start `track` for a nearby `/play_music`. `onEnded` marks the local player
- *  as the performer and fires when the track runs out — that is the cue to
- *  stop the emote. `offsetSecs` > 0 joins a tune mid-track (the listener just
- *  came into earshot) and fades it in. Returns false when the track is
- *  unknown. */
+/** Start a known performance; `onEnded` marks our own, `offsetSecs` joins mid-track. */
 export function playPerformance(
   track: string,
   onEnded?: () => void,
@@ -688,6 +717,10 @@ const unsubscribeMuted = bgmMuted.subscribe((m) => {
 
 export function disposeBgm() {
   disposed = true
+  battleBlobs.clear()
+  battleDownloads.clear()
+  battleCacheBytes = 0
+  battleFile = null
   started = false
   unsubscribeVolume()
   unsubscribeMuted()

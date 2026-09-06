@@ -324,13 +324,11 @@
   let lastAnimKey: string | undefined
   let hitAction: THREE.AnimationAction | null = null
   let sitIdleLastTime = 0
-  // False when the pack lacked the clip: the ordered array substitutes
-  // slash1 there, and layering a swing on every blow is worse than nothing.
+  // Avoid using the fallback slash animation as a hit reaction.
   let hitClipLoaded = false
   let combatIdleClipLoaded = false
-  let lastHitCounter = hitCounter
-  // Once every pack is loaded, a `/anim` name that still resolves to no
-  // clip is a typo, not a pending load.
+  let lastHitCounter = untrack(() => hitCounter)
+  // After all packs load, an unknown `/anim` name is a typo.
   let debugPacksSearched = false
   let dyingFinishedNotified = $state(false)
   let interactionFinishedNotified = $state(false)
