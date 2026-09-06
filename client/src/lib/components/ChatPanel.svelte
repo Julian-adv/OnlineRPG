@@ -10,7 +10,11 @@
     type ChatChannel,
   } from '../stores/chatChannelStore'
   import { networkManager } from '../network/socket'
-  import { isPartyTabLine, unreadPartyCount } from '../chat-format'
+  import {
+    isPartyTabLine,
+    unreadChatCount,
+    unreadPartyCount,
+  } from '../chat-format'
   import { handleCommand, visibleCommandNames } from '../chat-commands'
   import {
     chatInputKeyIntent,
@@ -35,6 +39,7 @@
   const TRANSCRIPT_FADE_DELAY_MS = 20_000
 
   let activeTab = $state<Tab>('all')
+  let collapsed = $state(false)
   let chatMessages = $derived($gameStore.chatMessages)
   // The All tab shows everything; this tab isolates the party channel.
   let partyMessages = $derived($gameStore.chatMessages.filter(isPartyTabLine))
@@ -45,12 +50,28 @@
   // Only the Party tab counts as reading the channel. Seeded from the
   // transcript in hand so a remount does not badge what was already read.
   let seenChatId = $state($gameStore.chatMessages.at(-1)?.id ?? 0)
+  let seenCollapsedChatId = $state($gameStore.chatMessages.at(-1)?.id ?? 0)
   let partyUnread = $derived(
     unreadPartyCount(chatMessages, seenChatId, $gameStore.currentPlayer?.name)
   )
+  let collapsedUnread = $derived(
+    unreadChatCount(
+      chatMessages,
+      seenCollapsedChatId,
+      $gameStore.currentPlayer?.name
+    )
+  )
 
   $effect(() => {
-    if (activeTab === 'party') seenChatId = chatMessages.at(-1)?.id ?? 0
+    if (!collapsed && activeTab === 'party') {
+      seenChatId = chatMessages.at(-1)?.id ?? 0
+    }
+  })
+
+  $effect(() => {
+    if (!collapsed) {
+      seenCollapsedChatId = chatMessages.at(-1)?.id ?? 0
+    }
   })
 
   // Party chat is sticky (a /p holds until /s). Losing the party reverts
@@ -207,6 +228,18 @@
     hovering = value
   }
 
+  function collapseChat() {
+    channelMenuOpen = false
+    collapsed = true
+  }
+
+  function expandChat(focusInput = false) {
+    collapsed = false
+    transcriptVisible = true
+    seenCollapsedChatId = chatMessages.at(-1)?.id ?? 0
+    if (focusInput) tick().then(() => chatInput?.focus())
+  }
+
   function sendMessage() {
     const trimmed = messageInput.trim()
     if (!trimmed) return
@@ -289,7 +322,7 @@
     ) {
       event.preventDefault()
       leaveCombatTab()
-      chatInput?.focus()
+      expandChat(true)
     }
   }
 
@@ -316,7 +349,7 @@
     } else {
       chatChannel.set('say')
     }
-    chatInput?.focus()
+    expandChat(true)
   }
 
   // NPC "Talk" action (click or context menu) asks for local chat input.
@@ -339,7 +372,7 @@
     untrack(() => {
       activeTab = 'all'
       messageInput = request.text
-      chatInput?.focus()
+      expandChat(true)
     })
   })
 </script>
@@ -353,41 +386,67 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="chat-panel"
-  class:transcript-faded={!transcriptVisible}
+  class:collapsed
+  class:disconnected={!isConnected}
+  class:transcript-faded={!collapsed && !transcriptVisible}
   onmouseenter={() => setHovering(true)}
   onmouseleave={() => setHovering(false)}
   use:draggablePanel={'chat'}
 >
-  <div class="tabs" data-drag-handle>
+  <div class="tabs" class:collapsed data-drag-handle>
     <span class="chat-title">Chat</span>
-    <button
-      class="tab"
-      class:active={activeTab === 'all'}
-      onclick={() => (activeTab = 'all')}
-    >
-      All
-    </button>
-    <button
-      class="tab"
-      class:active={activeTab === 'party'}
-      aria-label={partyUnread > 0 ? `Party, ${partyUnread} unread` : undefined}
-      onclick={() => (activeTab = 'party')}
-    >
-      Party
-      {#if partyUnread > 0}
-        <span class="tab-badge" aria-hidden="true">{partyUnread}</span>
+    {#if collapsed}
+      {#if collapsedUnread > 0}
+        <span class="collapsed-unread">{collapsedUnread} new</span>
       {/if}
-    </button>
-    <button
-      class="tab"
-      class:active={activeTab === 'combat'}
-      onclick={() => (activeTab = 'combat')}
-    >
-      Combat
-    </button>
+      <button
+        class="panel-toggle"
+        aria-label="Expand chat"
+        aria-expanded="false"
+        onclick={() => expandChat()}
+      >
+        ▴
+      </button>
+    {:else}
+      <button
+        class="tab"
+        class:active={activeTab === 'all'}
+        onclick={() => (activeTab = 'all')}
+      >
+        All
+      </button>
+      <button
+        class="tab"
+        class:active={activeTab === 'party'}
+        aria-label={partyUnread > 0
+          ? `Party, ${partyUnread} unread`
+          : undefined}
+        onclick={() => (activeTab = 'party')}
+      >
+        Party
+        {#if partyUnread > 0}
+          <span class="tab-badge" aria-hidden="true">{partyUnread}</span>
+        {/if}
+      </button>
+      <button
+        class="tab"
+        class:active={activeTab === 'combat'}
+        onclick={() => (activeTab = 'combat')}
+      >
+        Combat
+      </button>
+      <button
+        class="panel-toggle"
+        aria-label="Minimize chat"
+        aria-expanded="true"
+        onclick={collapseChat}
+      >
+        ▾
+      </button>
+    {/if}
   </div>
 
-  <div class="chat-body">
+  <div class="chat-body" class:collapsed-hidden={collapsed}>
     {#if isTranslatorApiSupported() && activeTab !== 'combat'}
       <select
         class="translate-lang-select"
@@ -457,7 +516,11 @@
     </div>
   </div>
 
-  <div class="chat-input" class:disconnected={!isConnected}>
+  <div
+    class="chat-input"
+    class:disconnected={!isConnected}
+    class:collapsed-hidden={collapsed}
+  >
     <div class="channel-wrap">
       {#if channelMenuOpen}
         <div class="channel-menu" role="menu">
@@ -568,6 +631,26 @@
     pointer-events: none;
   }
 
+  .chat-panel.collapsed {
+    width: min(
+      240px,
+      calc(100vw - var(--hud-edge-left) - var(--hud-edge-right))
+    );
+    height: 36px;
+    background: rgba(0, 0, 0, 0.86);
+    border-color: #4a5568;
+    box-shadow: inset 0 -2px #4299e1;
+  }
+
+  .chat-panel.collapsed.disconnected {
+    box-shadow: inset 0 -2px #742a2a;
+  }
+
+  .chat-body.collapsed-hidden,
+  .chat-input.collapsed-hidden {
+    display: none;
+  }
+
   .chat-panel.transcript-faded .chat-input,
   .chat-panel.transcript-faded .chat-input * {
     pointer-events: auto;
@@ -579,6 +662,12 @@
     border-bottom: 1px solid #4a5568;
     flex-shrink: 0;
     transition: opacity 700ms ease;
+  }
+
+  .tabs.collapsed {
+    height: 100%;
+    border-bottom: none;
+    border-radius: 8px;
   }
 
   .chat-title {
@@ -628,6 +717,42 @@
     color: #e2e8f0;
     background: rgba(255, 255, 255, 0.05);
     border-bottom: 2px solid #4299e1;
+  }
+
+  .collapsed-unread {
+    align-self: center;
+    margin-right: 8px;
+    color: #a0aec0;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .panel-toggle {
+    align-self: stretch;
+    min-width: 34px;
+    padding: 0 10px;
+    border: none;
+    border-left: 1px solid rgba(74, 85, 104, 0.75);
+    background: rgba(45, 55, 72, 0.65);
+    color: #a0aec0;
+    font-size: 11px;
+    cursor: pointer;
+    transition:
+      color 0.15s,
+      background 0.15s;
+  }
+
+  .panel-toggle:focus {
+    outline: none;
+  }
+
+  .panel-toggle:hover {
+    background: rgba(66, 153, 225, 0.2);
+    color: #ffffff;
+  }
+
+  .tabs.collapsed .panel-toggle {
+    border-radius: 0 7px 7px 0;
   }
 
   /* Party blue, matching the channel it counts. */

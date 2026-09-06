@@ -16,13 +16,11 @@ const DRAG_THRESHOLD_SQ = 16
 export function draggablePanel(node: HTMLElement, id: PanelId) {
   const handle = node.querySelector<HTMLElement>('[data-drag-handle]')
   if (!handle) return
+  const dragHandle = handle
 
   handle.style.touchAction = 'none'
   handle.style.cursor = 'grab'
   handle.style.userSelect = 'none'
-  // Header buttons trail the title; they must never be the only part left on screen.
-  const firstButton = handle.querySelector('button')
-
   let stored: PanelPos | undefined
   let endDrag: (() => void) | null = null
 
@@ -32,6 +30,7 @@ export function draggablePanel(node: HTMLElement, id: PanelId) {
   }
 
   function rightReserve(rect: DOMRect) {
+    const firstButton = dragHandle.querySelector('button')
     return firstButton
       ? rect.right - firstButton.getBoundingClientRect().left
       : 0

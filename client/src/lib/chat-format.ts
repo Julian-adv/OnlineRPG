@@ -33,6 +33,20 @@ export function unreadPartyCount(
   ).length
 }
 
+export function unreadChatCount(
+  entries: Pick<StoredChatEntry, 'sender' | 'name' | 'id'>[],
+  seenId: number,
+  ownName: string | undefined
+): number {
+  return entries.filter(
+    (entry) =>
+      entry.id > seenId &&
+      entry.sender !== 'local' &&
+      entry.name !== ownName &&
+      !(entry.sender === 'whisper' && entry.name?.startsWith('To '))
+  ).length
+}
+
 /** What the Party tab shows: the channel itself plus the party and summon
  *  notices, which reach the client as plain system lines. */
 export function isPartyTabLine(

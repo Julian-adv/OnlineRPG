@@ -34,6 +34,11 @@
 - `doc/design/party-ui/concept-04-class-rail.png` — deterministic local composite using the gameplay capture, project character concepts, and exact party SVG assets; project-owned, 2026-08-05
 - `doc/design/party-ui/concept-05-portrait-side-tab.png` — deterministic local composite using the gameplay capture, project character concepts, and exact party SVG assets; project-owned, 2026-08-05
 
+## Chat panel examples
+
+- `doc/design/chat-panel/expanded.png` — local OpenMMO gameplay capture supplied by the contributor, showing the expanded chat panel; project-owned, 2026-09-05
+- `doc/design/chat-panel/collapsed.png` — local OpenMMO gameplay capture supplied by the contributor, showing the collapsed chat panel; project-owned, 2026-09-05
+
 ## Party class icons
 
 - `client/public/icons/party/class-knight.svg` — original OpenMMO vector asset authored with OpenAI GPT Image 2, ChatGPT Pro tier, 2026-08-05; project-owned
