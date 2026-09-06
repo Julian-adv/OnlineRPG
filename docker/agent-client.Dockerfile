@@ -51,7 +51,6 @@ COPY agent-client/data/animation_durations.json \
      agent-client/data/system_prompt.txt \
      /app/agent-client/data/
 COPY agent-client/data/templates/ /app/agent-client/data/templates/
-COPY agent-client/data/prompts/ /app/agent-client/data/prompts/
 COPY agent-client/data/user_prompts/ /app/agent-client/data/user_prompts/
 
 # The binary resolves data/config.toml and ../data/npc_token relative to CWD.

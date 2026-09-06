@@ -37,4 +37,3 @@ data/npc_token
 # Deployment-only agent config and regenerable caches.
 agent-client/data/config.toml
 agent-client/data/cache/
-agent-client/data/prompts/memory/
